@@ -241,8 +241,8 @@ def compute_metrics(tasks_df: pd.DataFrame, settings: dict, task_rates: dict) ->
     }
 
 # --------------------- UI -------------------
-st.set_page_config(page_title="Outlier Earnings Dashboard", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
-st.title("📈 Outlier Earnings Dashboard")
+st.set_page_config(page_title="Earnings Dashboard", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
+st.title("📈 Earnings Dashboard")
 
 settings = load_settings()
 task_rates = load_task_rates()
