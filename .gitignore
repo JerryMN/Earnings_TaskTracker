@@ -4,6 +4,15 @@
 # Streamlit secrets
 *.toml
 
+# Local earnings data and SQLite sidecar files
+data/
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/

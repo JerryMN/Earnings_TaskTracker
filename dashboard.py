@@ -1,145 +1,13 @@
 import streamlit as st
 import pandas as pd
-import json
 from datetime import date, datetime, timezone
 import altair as alt
 import requests
-import gspread
-from gspread_dataframe import set_with_dataframe, get_as_dataframe
-from google.oauth2.service_account import Credentials
-
-DEFAULT_SETTINGS = {
-    "personal_target_hours": 35.0,
-    "tier_threshold_minutes": 30.0,  # fallback for tiered tasks if not set per task
-    "bonus_milestones": [
-        {"hours": 20.0, "bonus": 43.50},
-        {"hours": 35.0, "bonus": 101.50}
-    ],
-    "extra_earnings": 0.0,          # running total added to current earnings (USD)
-    # FX controls
-    "use_live_fx": True,
-    "usd_mxn_rate": 18.50,          # last known USD->MXN (used & saved)
-    "usd_mxn_source": "manual",
-    "usd_mxn_last_updated": "",     # ISO timestamp (UTC)
-}
-
-# ---------- Use Google Sheets for saving data ----------
-GSHEETS_ID = st.secrets.get("GSHEETS_ID", "")
-GCP_SA = st.secrets.get("gcp_service_account", None)
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-WS_TASKS = "tasks"
-WS_SETTINGS = "settings"
-WS_RATES = "task_rates"
-
-# ---------- Google Sheets Functions ----------
-def _open_gsheet():
-    if not GCP_SA or not GSHEETS_ID:
-        raise RuntimeError("Streamlit Secrets not properly configured.")
-    creds = Credentials.from_service_account_info(GCP_SA, scopes=SCOPES)
-    client = gspread.authorize(creds)
-    try:
-        return client.open_by_key(GSHEETS_ID)
-    except gspread.SpreadsheetNotFound:
-        st.error("Spreadsheet not found. Double-check GSHEETS_ID (the string between /d/ and /edit in the URL).")
-        st.stop()
-    except Exception as e:
-        st.error(f"Google Sheets error: {e}")
-        st.stop()
-
-def _ensure_ws(sh, title, rows=1000, cols=26):
-    try:
-        return sh.worksheet(title)
-    except gspread.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=str(rows), cols=str(cols))
-
-# ---------- Data Functions ----------
-def load_settings():
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_SETTINGS, rows=10, cols=2)
-    raw = ws.acell("A1").value
-    if not raw:
-        ws.update("A1", [[json.dumps(DEFAULT_SETTINGS, indent=2)]], value_input_option="RAW")
-        return DEFAULT_SETTINGS.copy()
-    try:
-        s = json.loads(raw)
-    except Exception:
-        s = {}
-    for k, v in DEFAULT_SETTINGS.items():
-        s.setdefault(k, v)
-    return s
-
-def save_settings(settings: dict):
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_SETTINGS, rows=10, cols=2)
-    ws.update("A1", [[json.dumps(settings, indent=2)]], value_input_option="RAW")
-
-def load_task_rates():
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_RATES)
-    df = get_as_dataframe(ws, evaluate_formulas=True, header=0)
-    if df is None or df.empty:
-        return {}
-    df = df.fillna("")
-    out = {}
-    for _, r in df.iterrows():
-        name = str(r.get("task", "")).strip()
-        if not name:
-            continue
-        out[name] = {
-            "hourly_rate": float(r.get("hourly_rate", 0) or 0),
-            "discounted_rate": float(r.get("discounted_rate", 0) or 0),
-            "pricing_mode": str(r.get("pricing_mode", "manual")).lower(),
-            "tier_threshold_minutes": float(r.get("tier_threshold_minutes", DEFAULT_SETTINGS["tier_threshold_minutes"]) or 0),
-        }
-    return out
-
-def save_task_rates(rates: dict):
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_RATES)
-    rows = []
-    for k, v in rates.items():
-        rows.append({
-            "task": k,
-            "hourly_rate": v.get("hourly_rate", 0.0),
-            "discounted_rate": v.get("discounted_rate", 0.0),
-            "pricing_mode": v.get("pricing_mode", "manual"),
-            "tier_threshold_minutes": v.get("tier_threshold_minutes", DEFAULT_SETTINGS["tier_threshold_minutes"]),
-        })
-    df = pd.DataFrame(rows, columns=["task","hourly_rate","discounted_rate","pricing_mode","tier_threshold_minutes"])
-    ws.clear()
-    if df.empty:
-        ws.update("A1:E1", [df.columns.tolist()])
-    else:
-        set_with_dataframe(ws, df, include_index=False, include_column_header=True, resize=True)
-
-def load_tasks() -> pd.DataFrame:
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_TASKS)
-    df = get_as_dataframe(ws, evaluate_formulas=True, header=0)
-    if df is None or df.empty:
-        df = pd.DataFrame(columns=["date","task","minutes","seconds","rate_type"])
-        set_with_dataframe(ws, df, include_index=False, include_column_header=True, resize=True)
-        return df
-    expected = ["date","task","minutes","seconds","rate_type"]
-    for col in expected:
-        if col not in df.columns:
-            df[col] = pd.NA
-    df = df[expected]
-    df["minutes"] = pd.to_numeric(df["minutes"], errors="coerce").fillna(0).astype(int)
-    df["seconds"] = pd.to_numeric(df["seconds"], errors="coerce").fillna(0).astype(int)
-    df["rate_type"] = df["rate_type"].fillna("full")
-    try:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
-    except Exception:
-        df["date"] = df["date"].astype(str)
-    return df.reset_index(drop=True)
-
-def save_tasks(df: pd.DataFrame):
-    sh = _open_gsheet()
-    ws = _ensure_ws(sh, WS_TASKS)
-    out = df.copy()
-    out = out[["date","task","minutes","seconds","rate_type"]]
-    set_with_dataframe(ws, out, include_index=False, include_column_header=True, resize=True)
+from database import DEFAULT_SETTINGS, initialize_database
+from storage import (
+    add_task, clear_tasks, delete_tasks, load_settings, load_task_rates,
+    load_tasks, save_settings, save_task_rates,
+)
 
 # ---------- Live FX Functions ----------
 def fetch_usd_mxn_rate() -> tuple[float, str]:
@@ -158,8 +26,10 @@ def fetch_usd_mxn_rate() -> tuple[float, str]:
                 rate = float(js["rates"]["MXN"])  # {'rates': {'MXN': 16.8}, 'base': 'USD', 'date': 'YYYY-MM-DD'}
             elif name == "erapi":
                 rate = float(js["rates"]["MXN"])   # {'result':'success','rates':{'MXN':16.8}, ...}
-            else:  # exchangerate_host
+            elif name == "exchangerate_host":
                 rate = float(js["rates"]["MXN"])  # {'rates': {'MXN': 16.8}, 'base': 'USD', ...}
+            else: 
+                raise ValueError(f"Unknown source {name}")
             if rate > 0:
                 return rate, name
         except Exception:
@@ -244,11 +114,12 @@ def compute_metrics(tasks_df: pd.DataFrame, settings: dict, task_rates: dict) ->
 st.set_page_config(page_title="Earnings Dashboard", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 st.title("📈 Earnings Dashboard")
 
+initialize_database()
 settings = load_settings()
 task_rates = load_task_rates()
 
 # On-first-load attempt a live FX refresh if enabled and no previous timestamp
-if settings.get("use_live_fx", True) and not settings.get("usd_mxn_last_updated"):
+if settings.get("use_live_fx", False) and not settings.get("usd_mxn_last_updated"):
     try:
         rate, src = fetch_usd_mxn_rate()
         settings["usd_mxn_rate"] = rate
@@ -271,7 +142,7 @@ with st.sidebar:
 
     # FX controls
     st.subheader("💱 USD → MXN")
-    settings["use_live_fx"] = st.checkbox("Use live rate", value=bool(settings.get("use_live_fx", True)))
+    settings["use_live_fx"] = st.checkbox("Use live rate", value=bool(settings.get("use_live_fx", False)))
     if settings["use_live_fx"]:
         col_fx1, col_fx2 = st.columns([1,1])
         with col_fx1:
@@ -418,7 +289,6 @@ with st.form("task_form", clear_on_submit=True):
         if t_task == "(add task types in Settings)":
             st.error("Please add task types in Settings first.")
         else:
-            df = load_tasks()
             new_row = {
                 "date": pd.to_datetime(t_date).strftime("%Y-%m-%d"),
                 "task": t_task.strip(),
@@ -426,8 +296,7 @@ with st.form("task_form", clear_on_submit=True):
                 "seconds": int(t_seconds),
                 "rate_type": rate_type,
             }
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            save_tasks(df)
+            add_task(new_row)
             st.success("Task added.")
             st.rerun()
 
@@ -463,25 +332,13 @@ edited_display = st.data_editor(
 col_tb, col_tc = st.columns([1,1])
 with col_tb:
     if st.button("🗑️ Delete checked rows"):
-        ed = edited_display.copy()
-        to_keep = ~ed.get("delete", pd.Series(False, index=ed.index)).fillna(False)
-        ed = ed.loc[to_keep, ["date", "task", "minutes", "seconds"]].reset_index(drop=True)
-        # keep rate_type from raw where possible (defaults to 'full' for mismatched lengths)
-        rate_series = _tasks_raw.get("rate_type", pd.Series([], dtype="object")).reset_index(drop=True)
-        rate_series = rate_series.reindex(range(len(ed))).fillna("full")
-        new_raw = pd.DataFrame({
-            "date": ed.get("date"),
-            "task": ed.get("task"),
-            "minutes": pd.to_numeric(ed.get("minutes"), errors="coerce").fillna(0).astype(int),
-            "seconds": pd.to_numeric(ed.get("seconds"), errors="coerce").fillna(0).astype(int),
-            "rate_type": rate_series,
-        })
-        save_tasks(new_raw)
+        selected = edited_display["delete"].fillna(False).astype(bool)
+        delete_tasks(_tasks_raw.loc[selected, "id"].tolist())
         st.success("Selected rows deleted.")
         st.rerun()
 with col_tc:
     if st.button("🧹 Clear all tasks"):
-        save_tasks(pd.DataFrame(columns=["date", "task", "minutes", "seconds", "rate_type"]))
+        clear_tasks()
         st.warning("All tasks cleared.")
         st.rerun()
 
@@ -489,7 +346,8 @@ with col_tc:
 with st.expander("What do Manual vs Tiered pricing mean?"):
     st.markdown(
         """
-**Manual:** You choose **full** or **discounted** for each task.  
+**Manual:** You choose **full** or **discounted** for each task.
+
 **Tiered:** The first **N minutes** (its threshold) are billed at that task type’s **full** rate; the rest at its **discounted** rate. No rate-type picker needed.
 
 You set these on the **Task Rates** table in the sidebar.
