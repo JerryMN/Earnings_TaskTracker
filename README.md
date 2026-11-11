@@ -1,8 +1,7 @@
 # Earnings Task Tracker
 
 A local Streamlit dashboard for logging tasks, configuring rates, and tracking
-earnings and bonus milestones. Data is stored in SQLite; no Google account,
-credentials, database server, or API configuration is required.
+earnings and bonus milestones. Data is stored in SQLite.
 
 ## Run locally
 
@@ -48,12 +47,7 @@ python -m streamlit run dashboard.py
 The default location does not depend on the working directory. Each clone has its
 own data unless configured to use the same file. Database files are ignored by
 Git. To back up or transfer data, stop the app and copy the database file; restore
-it to the same location before starting the app again. Use a local disk for an
-active database; do not share an active SQLite file over a network or sync service.
-
-Existing Google Sheets data is **not automatically imported**. A fresh database
-starts with an empty task log and no rates; the original spreadsheet is untouched.
-Old Streamlit Google secrets are no longer used.
+it to the same location before starting the app again. 
 
 ## Exchange rates
 
