@@ -5,7 +5,8 @@ Call initialize_database() once at application startup before using these helper
 
 import json
 
-from database import DEFAULT_SETTINGS, connect
+from default_settings import DEFAULT_SETTINGS
+from database import connect
 
 
 def load_settings(db_path=None):

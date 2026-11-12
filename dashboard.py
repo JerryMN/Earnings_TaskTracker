@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import date, datetime, timezone
 import altair as alt
 import requests
-from database import DEFAULT_SETTINGS, initialize_database
+from default_settings import DEFAULT_SETTINGS
+from database import initialize_database
 from storage import (
     add_task, clear_tasks, delete_tasks, load_settings, load_task_rates,
     load_tasks, save_settings, save_task_rates,
@@ -45,7 +46,7 @@ def compute_task_earning(minutes: int, seconds: int, rate_type: str, task_rates:
     task_rate = task_rates.get(task_name, {})
     hr = float(task_rate.get("hourly_rate", 0.0))
     dr = float(task_rate.get("discounted_rate", 0.0))
-    mode = str(task_rate.get("pricing_mode", "manual")).lower()
+    mode = str(task_rate.get("pricing_mode", "manual")).strip().lower()
     thr = float(task_rate.get("tier_threshold_minutes", DEFAULT_SETTINGS["tier_threshold_minutes"]))
 
     if mode == "tiered":
@@ -167,6 +168,12 @@ with st.sidebar:
             value=float(settings.get("usd_mxn_rate", DEFAULT_SETTINGS["usd_mxn_rate"]))
         )
 
+    settings["conversion_fee_percent"] = st.number_input(
+        "Conversion fee (%)", min_value=0.0, max_value=100.0, step=0.1,
+        value=float(settings.get("conversion_fee_percent", DEFAULT_SETTINGS["conversion_fee_percent"])),
+        help="Deducted from USD earnings before conversion to MXN. Save settings to keep this value."
+    )
+
     st.subheader("🎯 Bonus milestones")
     bm_df = pd.DataFrame(settings.get("bonus_milestones", []))
     if bm_df.empty:
@@ -202,12 +209,33 @@ with st.sidebar:
 
 st.divider()
 
-# ---------- KPIs ----------
-metrics = compute_metrics(load_tasks(), settings, task_rates)
+# ---------- Date filter shared by the table, KPIs, and progress chart ----------
+all_tasks = load_tasks()
+_tasks_raw = all_tasks
+filter_dates = st.checkbox("Filter by date", key="filter_dates")
+if filter_dates:
+    task_dates = pd.to_datetime(all_tasks["date"], errors="coerce").dt.date
+    valid_dates = task_dates.dropna()
+    first_date = valid_dates.min() if not valid_dates.empty else date.today()
+    last_date = valid_dates.max() if not valid_dates.empty else date.today()
+    start_col, end_col = st.columns(2)
+    start_date = start_col.date_input("Start date", value=first_date, key="filter_start")
+    end_date = end_col.date_input("End date", value=last_date, key="filter_end")
+    if start_date > end_date:
+        st.error("Start date must be on or before end date.")
+        _tasks_raw = all_tasks.iloc[0:0].copy()
+    else:
+        _tasks_raw = all_tasks.loc[
+            (task_dates >= start_date) & (task_dates <= end_date)
+        ].reset_index(drop=True)
+    st.caption("Dates are inclusive. All totals and progress use the filtered tasks. Extra earnings remain a global adjustment.")
 
-# Compute MXN conversion for current earnings. Remove 4.5%  from Paypal commission.
+# ---------- KPIs ----------
+metrics = compute_metrics(_tasks_raw, settings, task_rates)
+
+# Apply the configured conversion fee to MXN earnings.
 earnings_usd = float(metrics["total_earnings"] + metrics["bonuses_earned"]) if metrics else 0.0
-earnings_mxn = 0.955 * earnings_usd * float(settings.get("usd_mxn_rate", DEFAULT_SETTINGS["usd_mxn_rate"]))
+earnings_mxn = (1 - float(settings["conversion_fee_percent"]) / 100.0) * earnings_usd * float(settings.get("usd_mxn_rate", DEFAULT_SETTINGS["usd_mxn_rate"]))
 
 m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
@@ -265,20 +293,21 @@ st.divider()
 
 # ---------- Task Logger ----------
 st.subheader("📝 Log a task")
+task_options = list(task_rates.keys()) or ["(add task types in Settings)"]
+if st.session_state.pop("reset_task_selection", False) or st.session_state.get("task_name") not in task_options:
+    st.session_state["task_name"] = task_options[0]
+t_task = st.selectbox("Task name", options=task_options, key="task_name")
+t_mode = str(task_rates.get(t_task, {}).get("pricing_mode", "manual")).strip().lower()
 with st.form("task_form", clear_on_submit=True):
-    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1])
+    c1, c3, c4, c5 = st.columns(4)
     with c1:
         t_date = st.date_input("Date", value=date.today())
-    with c2:
-        task_options = list(task_rates.keys())
-        t_task = st.selectbox("Task name", options=task_options if task_options else ["(add task types in Settings)"])
     with c3:
         t_minutes = st.number_input("Minutes", min_value=0, step=1, value=0)
     with c4:
         t_seconds = st.number_input("Seconds", min_value=0, max_value=59, step=1, value=0)
     with c5:
-        t_mode = task_rates.get(t_task, {}).get("pricing_mode", "manual")
-        if t_mode == "manual":
+        if t_mode != "tiered":
             rate_type = st.selectbox("Rate type", options=["full", "discounted"], index=0)
         else:
             rate_type = "full"
@@ -297,12 +326,12 @@ with st.form("task_form", clear_on_submit=True):
                 "rate_type": rate_type,
             }
             add_task(new_row)
+            st.session_state["reset_task_selection"] = True
             st.success("Task added.")
             st.rerun()
 
 # ---------- Task Table ----------
 st.subheader("📚 Task log")
-_tasks_raw = load_tasks()
 if not _tasks_raw.empty:
     tasks_display = _tasks_raw.copy()
     tasks_display["earning"] = tasks_display.apply(
@@ -319,7 +348,7 @@ edited_display = st.data_editor(
     tasks_display,
     num_rows="fixed",
     width='stretch',
-    key="tasks_editor",
+    key="tasks_editor_" + "_".join(map(str, _tasks_raw["id"].tolist())),
     column_config={
         "minutes": st.column_config.NumberColumn("minutes", step=1),
         "seconds": st.column_config.NumberColumn("seconds", step=1),

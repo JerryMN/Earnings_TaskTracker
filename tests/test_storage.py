@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from database import DEFAULT_SETTINGS, connect, database_path, initialize_database
+from default_settings import DEFAULT_SETTINGS
+from database import connect, database_path, initialize_database
 from storage import (
     add_task, clear_tasks, delete_tasks, load_settings, load_task_rates,
     load_tasks, save_settings, save_task_rates,
@@ -56,6 +57,15 @@ class StorageTests(unittest.TestCase):
             connection.execute("DELETE FROM settings WHERE key = 'use_live_fx'")
         initialize_database(self.path)
         self.assertIs(load_settings(self.path)["use_live_fx"], False)
+
+    def test_conversion_fee_added_to_existing_database_and_saved_value_preserved(self):
+        with connect(self.path) as connection:
+            connection.execute("DELETE FROM settings WHERE key = 'conversion_fee_percent'")
+        initialize_database(self.path)
+        self.assertEqual(load_settings(self.path)["conversion_fee_percent"], 4.5)
+        save_settings({"conversion_fee_percent": 7.0}, self.path)
+        initialize_database(self.path)
+        self.assertEqual(load_settings(self.path)["conversion_fee_percent"], 7.0)
 
     def test_rates_replace_and_clear_without_deleting_tasks(self):
         rates = {"Project's work": {"hourly_rate": 40.25, "discounted_rate": 12.5,

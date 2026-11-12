@@ -51,9 +51,30 @@ it to the same location before starting the app again.
 
 ## Exchange rates
 
+Default preferences live in `default_settings.py`. Startup adds missing settings
+to existing databases without overwriting saved preferences.
+
+Set **Conversion fee (%)** in the sidebar (default: 4.5%, range: 0–100%) and
+click **Save settings** to persist it. The fee reduces converted MXN earnings;
+USD earnings remain unchanged.
+
 The app starts with a manual USD/MXN rate of 18.50, which you can change in the
 sidebar. Live FX is optional: enabling it uses public HTTP APIs and requires
 internet, but no API credentials. Tasks, rates, and settings always remain local.
+
+## Date filter and task selection
+
+Enable **Filter by date** above the dashboard and choose inclusive start/end
+dates. The task log, hours, task count, earnings, earned bonuses, and progress
+all use the selected period. Disable the filter to show all dates. Extra earnings
+remain a global adjustment because they have no associated date.
+
+The task-name selector updates Rate Type immediately: manual tasks show it;
+tiered tasks calculate their rates automatically. After submission, the selector
+returns to the first task type.
+
+Deleting checked rows applies only to selected visible tasks. **Clear all tasks**
+still clears the entire task history, including entries outside the date filter.
 
 ## Tests
 
