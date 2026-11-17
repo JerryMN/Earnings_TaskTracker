@@ -10,7 +10,7 @@ DEFAULT_SETTINGS = {
     "extra_earnings": 0.0,
     "use_live_fx": False,
     "usd_mxn_rate": 18.50,
-    "conversion_fee_percent": 0,
+    "conversion_fee_percent": 4.5,
     "usd_mxn_source": "manual",
     "usd_mxn_last_updated": "",
 }
